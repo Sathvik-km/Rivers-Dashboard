@@ -3,13 +3,34 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import leafmap.foliumap as leafmap
-import folium
+import google.generativeai as genai
 
 st.set_page_config(
     page_title="Rivers of India Dashboard",
-    page_icon="🌊",
+    #page_icon="🌊",
     layout="wide"
 )
+
+try:
+    # Configure the Gemini API key from Streamlit secrets
+    if "GOOGLE_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    else:
+        st.error("Google API Key not found in secrets. Please add it to .streamlit/secrets.toml")
+        st.stop() 
+except Exception as e:
+    st.error(f"Error configuring Gemini API: {e}")
+    st.stop()
+
+@st.cache_data # Cache the AI responses to avoid repeated calls for the same prompt
+def get_gemini_response(prompt):
+    model = genai.GenerativeModel('gemini-2.0-flash') 
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        st.error(f"Gemini API Error: {e}")
+        return None
 
 data_url = 'https://github.com/Sathvik-km/Rivers-Dashboard/releases/' \
      'download/data/'
@@ -52,16 +73,37 @@ with st.sidebar:
                            index=0)
 
     if states:
-        st.header("Selected Regions Stats")
-        selected_states = country_gdf[country_gdf.name.isin(states)]
-        selected_rivers = gpd.sjoin(rivers_gdf, selected_states, how='inner', predicate= 'intersects')
+        tab1, tab2 = st.tabs(["Selected Regions Stats", "River Insights"])
+        with tab1:
+            st.subheader("Selected Regions Stats")
+            selected_states = country_gdf[country_gdf.name.isin(states)]
+            selected_rivers = gpd.sjoin(rivers_gdf, selected_states, how='inner', predicate= 'intersects')
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Selected States", len(states))
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Selected States", len(states))
 
-        with col2:
-            st.metric("Rivers Found", len(selected_rivers))
+            with col2:
+                st.metric("Rivers Found", len(selected_rivers))
+
+        with tab2:
+            st.subheader("River Insights (AI Generated)")
+            if st.button("Get River Facts for Selected State(s)"):
+                if states:
+                    states_string = ", ".join(states)
+                    prompt = f"""Provide a concise overview of the major rivers in the Indian state(s) of {states_string}.
+                        For each major river, briefly mention its significance importance(e.g., cultural, economic, ecological, tributaries, latest news)
+                        and one interesting fact. If multiple states are listed, provide a combined overview or key highlights for the region.
+                        Keep the response under 300 words.
+                        """
+                    with st.spinner(f"Waiting for LLM response..."):
+                        ai_response = get_gemini_response(prompt)
+                        if ai_response:
+                            st.markdown(ai_response)
+                        else:
+                            st.warning("Could not retrieve information from AI at this time.")
+                else:
+                    st.info("Please select at least one state to get river facts.")
 
 @st.cache_data
 def create_basemap(basemap_name="CartoDB.DarkMatter"):
@@ -89,14 +131,15 @@ def highlight_function(feature):
         'opacity': 1
     }
 
-#country_gdf
+# Main part
+# Create the map
 if states:
     states_gdf = country_gdf[country_gdf.name.isin(states)]
     merged_gdf = gpd.sjoin(rivers_gdf, states_gdf , how='inner', predicate='intersects')
 
     m = create_basemap(basemap)
     m.add_gdf(states_gdf, layer_name = 'States', style = {'fill_opacity': 0.2, 'fillColor':'#3388ff','color':'#004daa', 'weight':2}, zoom_to_layer=True, info_mode='on_click')
-    #m.add_gdf(merged_gdf, layer_name = 'Rivers', style = {'color':'blue', 'weight': 0.5, 'opacity':0.8}, zoom_to_layer=True, info_mode='on_hover')
+    
     m.add_gdf(merged_gdf, layer_name = 'Rivers', style_callback = style_features, zoom_to_layer=False, info_mode='on_hover', highlight_function= highlight_function)
     map_data = m.to_streamlit(width=800,height=600, use_container_width=True)
 
