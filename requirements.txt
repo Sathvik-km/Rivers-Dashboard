@@ -1,0 +1,6 @@
+geopandas
+pandas
+streamlit
+matplotlib
+leafmap
+google-generativeai
